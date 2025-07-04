@@ -1,0 +1,117 @@
+/* Icon-only button style */
+QPushButton {
+    background: transparent;
+    border: 2px solid white;
+    border-radius: 10px;
+    padding: 4px;
+    color: white;
+}
+
+/* Show only the icon, hide text if any */
+QPushButton { 
+    qproperty-iconSize: 32px 32px;
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
+    font-size: 0px;
+}
+
+/* Hover: blue-cyan glowing gradient border */
+QPushButton:hover:enabled {
+    border: 3px solid qlineargradient(
+        spread:pad, x1:0, y1:0, x2:1, y2:1,
+        stop:0 #00FFFF, stop:1 #007ACC
+    );
+    /* Qt does not support box-shadow, but border color will give a glow effect */
+}
+
+/* Pressed and enabled: green, thicker border */
+QPushButton:pressed:enabled {
+    border: 4px solid #00FF00;
+}
+
+/* Pressed and disabled (e.g., missing required inputs): red, thicker border */
+QPushButton:pressed:disabled {
+    border: 4px solid #FF0000;
+}
+
+/* Disabled (not pressed): gray border, faded icon */
+QPushButton:disabled {
+    border: 2px solid #888;
+    color: #888;
+    opacity: 0.5;
+}
+
+/* 🔹 Labels */
+QLabel {
+    border-radius: 10px;
+    font-weight: bold;
+    color: white;
+}
+
+/* 🔹 Input Fields */
+QLineEdit, QSpinBox, QCheckBox, QTextEdit {
+    border-radius: 10px;
+    padding: 5px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+QLineEdit:hover, QSpinBox:hover, QTextEdit:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 🔹 Frames */
+QFrame {
+    border-radius: 10px;
+    background: rgba(0, 0, 50, 0.8);
+}
+
+/* 🔹 Progress Bar */
+QProgressBar {
+    border-radius: 10px;
+    border: 2px solid #555;
+    background: rgba(0, 0, 50, 0.8);
+    text-align: center;
+    color: white;
+}
+
+QProgressBar::chunk {
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #4CAF50, stop:1 #8BC34A);
+    border-radius: 10px;
+}
+
+/* 🔹 Scroll Areas */
+QScrollArea {
+    border-radius: 15px;
+    background: rgba(0, 0, 50, 0.9);
+}
+
+/* 🔹 Findings Panel */
+QWidget#findings_panel {
+    background: rgba(0, 0, 50, 0.9);
+    border-radius: 15px;
+    padding: 15px;
+    color: white;
+}
+
+/* 🔹 Results Panel */
+QWidget#results_panel {
+    background: rgba(0, 0, 50, 0.9);
+    border-radius: 15px;
+    padding: 15px;
+    color: white;
+}
+
+/* 🔹 Graph UI */
+QGraphicsView {
+    background-color: #001a33;
+    border: 2px solid #555; /* ✅ Fixed: Removed border-radius (unsupported in QGraphicsView) */
+}
+
+/* 🔹 Graph UI Hover */
+QGraphicsView:hover {
+    background: rgba(0, 0, 50, 0.7);
+}

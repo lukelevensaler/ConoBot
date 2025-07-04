@@ -1,0 +1,310 @@
+name: Self-Hosted Runners
+
+on:
+  workflow_run:
+    workflows: ["Self-hosted runner (push-caller)", "Self-hosted runner (scheduled-caller)"]
+    branches: ["main"]
+    types: [completed]
+    
+  push:
+    branches:
+      - ci_*
+      - ci-*
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/**"
+      - "templates/**"
+      - "utils/**"
+      
+  workflow_call:
+    inputs:
+      runner_type:
+        required: true
+        type: string
+        description: "Type of runner: push, scheduled, amd, intel-gaudi"
+      test_suite:
+        required: false
+        type: string
+        default: "all"
+        description: "Test suite to run: all, model, pipeline, example, deepspeed, trainer"
+        
+  repository_dispatch:
+  
+  schedule:
+    # Scheduled runs for different platforms
+    - cron: "0 0 * * *"   # Daily scheduled run
+    - cron: "0 12 * * *"  # AMD scheduled run
+
+env:
+  HF_HOME: /mnt/cache
+  TRANSFORMERS_IS_CI: yes
+  OMP_NUM_THREADS: 8
+  MKL_NUM_THREADS: 8
+  PYTEST_TIMEOUT: 60
+  TF_FORCE_GPU_ALLOW_GROWTH: true
+  CUDA_VISIBLE_DEVICES: 0,1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.runner_type || 'default' }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # Setup job for all runner types
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      runner-type: ${{ steps.set-runner.outputs.runner-type }}
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Determine runner type
+        id: set-runner
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+            echo "runner-type=${{ inputs.runner_type }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == *"amd"* ]]; then
+            echo "runner-type=amd" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == *"intel"* ]]; then
+            echo "runner-type=intel-gaudi" >> $GITHUB_OUTPUT
+          else
+            echo "runner-type=standard" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Set test matrix
+        id: set-matrix
+        run: |
+          if [[ "${{ inputs.test_suite }}" == "model" ]]; then
+            matrix='["model_tests"]'
+          elif [[ "${{ inputs.test_suite }}" == "pipeline" ]]; then
+            matrix='["pipeline_tests"]'
+          elif [[ "${{ inputs.test_suite }}" == "example" ]]; then
+            matrix='["example_tests"]'
+          elif [[ "${{ inputs.test_suite }}" == "deepspeed" ]]; then
+            matrix='["deepspeed_tests"]'
+          elif [[ "${{ inputs.test_suite }}" == "trainer" ]]; then
+            matrix='["trainer_tests"]'
+          else
+            matrix='["model_tests", "pipeline_tests", "example_tests", "deepspeed_tests", "trainer_tests"]'
+          fi
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+          
+      - name: Upload setup artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup_values
+          path: /tmp/setup_values
+
+  # Standard GPU tests
+  gpu-tests:
+    name: "GPU Tests"
+    needs: [setup]
+    if: ${{ needs.setup.outputs.runner-type == 'standard' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test-suite: ${{ fromJson(needs.setup.outputs.matrix) }}
+        
+    runs-on:
+      group: aws-g4dn-2xlarge-cache
+      
+    container:
+      image: huggingface/transformers-all-latest-gpu
+      options: --gpus all --shm-size "16gb" --ipc host -v /mnt/cache/.cache/huggingface:/mnt/cache/
+      
+    steps:
+      - name: Update clone
+        working-directory: /transformers
+        run: |
+          git fetch && git checkout ${{ github.sha }}
+          
+      - name: Reinstall transformers in edit mode
+        working-directory: /transformers
+        run: |
+          python -m pip uninstall -y transformers
+          python -m pip install -e .
+          
+      - name: GPU visibility
+        run: |
+          nvidia-smi
+          
+      - name: Run model tests
+        if: ${{ matrix.test-suite == 'model_tests' }}
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/models/ -v --tb=short --maxfail=5
+          
+      - name: Run pipeline tests  
+        if: ${{ matrix.test-suite == 'pipeline_tests' }}
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/pipelines/ -v --tb=short --maxfail=5
+          
+      - name: Run example tests
+        if: ${{ matrix.test-suite == 'example_tests' }}
+        working-directory: /transformers
+        run: |
+          python -m pytest examples/ -v --tb=short --maxfail=5
+          
+      - name: Run DeepSpeed tests
+        if: ${{ matrix.test-suite == 'deepspeed_tests' }}
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/deepspeed/ -v --tb=short --maxfail=5
+          
+      - name: Run trainer tests
+        if: ${{ matrix.test-suite == 'trainer_tests' }}
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/trainer/ -v --tb=short --maxfail=5
+
+  # AMD GPU tests
+  amd-gpu-tests:
+    name: "AMD GPU Tests"
+    needs: [setup]
+    if: ${{ needs.setup.outputs.runner-type == 'amd' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test-suite: ${{ fromJson(needs.setup.outputs.matrix) }}
+        
+    runs-on:
+      group: aws-amd-gpu
+      
+    container:
+      image: huggingface/transformers-pytorch-amd-gpu
+      options: --device /dev/kfd --device /dev/dri --shm-size "16gb" --ipc host
+      
+    steps:
+      - name: Update clone
+        working-directory: /transformers
+        run: |
+          git fetch && git checkout ${{ github.sha }}
+          
+      - name: Reinstall transformers in edit mode
+        working-directory: /transformers
+        run: |
+          python -m pip uninstall -y transformers
+          python -m pip install -e .
+          
+      - name: AMD GPU visibility
+        run: |
+          rocm-smi
+          
+      - name: Run AMD-specific tests
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/amd/ -v --tb=short --maxfail=5
+
+  # Intel Gaudi tests
+  intel-gaudi-tests:
+    name: "Intel Gaudi Tests"
+    needs: [setup]
+    if: ${{ needs.setup.outputs.runner-type == 'intel-gaudi' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test-suite: ${{ fromJson(needs.setup.outputs.matrix) }}
+        
+    runs-on:
+      group: aws-intel-gaudi
+      
+    container:
+      image: huggingface/transformers-intel-gaudi
+      
+    steps:
+      - name: Update clone
+        working-directory: /transformers
+        run: |
+          git fetch && git checkout ${{ github.sha }}
+          
+      - name: Reinstall transformers in edit mode
+        working-directory: /transformers
+        run: |
+          python -m pip uninstall -y transformers
+          python -m pip install -e .
+          
+      - name: Intel Gaudi visibility
+        run: |
+          hl-smi
+          
+      - name: Run Intel Gaudi tests
+        working-directory: /transformers
+        run: |
+          python -m pytest tests/intel_gaudi/ -v --tb=short --maxfail=5
+
+  # SSH debugging capability
+  ssh-debug:
+    name: "SSH Debug Access"
+    if: ${{ github.event_name == 'workflow_dispatch' && contains(github.event.head_commit.message, '[ssh]') }}
+    runs-on:
+      group: aws-general-8-plus
+      
+    steps:
+      - name: Get runner to use
+        run: |
+          echo "Using runner: aws-general-8-plus"
+          
+      - name: Update clone
+        run: |
+          git clone https://github.com/${{ github.repository }}.git /workspace
+          cd /workspace && git checkout ${{ github.sha }}
+          
+      - name: Cleanup
+        run: |
+          sudo rm -rf /workspace/.git/hooks/post-checkout
+          
+      - name: Show installed libraries
+        run: |
+          pip list
+          
+      - name: NVIDIA-SMI
+        run: |
+          nvidia-smi
+          
+      - name: Setup Tailscale for SSH access
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:github-actions
+          
+      - name: SSH Access Information
+        run: |
+          echo "SSH access enabled. Connect using Tailscale network."
+          echo "Hostname: $(hostname)"
+          echo "IP: $(tailscale ip -4)"
+
+  # Cleanup and reporting
+  cleanup:
+    name: "Cleanup and Report"
+    needs: [gpu-tests, amd-gpu-tests, intel-gaudi-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Report status
+        run: |
+          echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| GPU Tests | ${{ needs.gpu-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| AMD GPU Tests | ${{ needs.amd-gpu-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Intel Gaudi Tests | ${{ needs.intel-gaudi-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Slack notification
+        if: ${{ failure() }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: ${{ secrets.CI_SLACK_CHANNEL }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}

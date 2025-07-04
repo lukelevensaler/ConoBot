@@ -1,0 +1,376 @@
+[build-system]
+requires = ["setuptools>=69.1.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conobot-ai"
+authors = [
+    {name = "Luke Levensaler", email = "lukelevensaler@conowareproject.org"},
+]
+keywords = [
+    "conobot",
+    "amide mapping",
+    "spectra-based de novo",
+    "LIMCALA",
+    "Levensaler Immobilized Metal Chelate Affinity Labelling Assay",
+    "artificial intelligence",
+    "machine learning",
+    "deep learning",
+    "deterministic",
+    "analytical",
+]
+description = "ConoBot AI is a deterministic and analytical advanced conversational AI assistant for amide mapping and spectra based de novo from LIMCALA (Levensaler Immobilized Metal Chelate Affinity Labelling Assay), developed by the ConoWare Project (conowareproject.org)."
+requires-python = ">=3.10,<3.13"
+license = {text = "ConoWare EULA 1.0"}
+version = "0.1.0"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dynamic = ["readme"]
+dependencies = [
+    # ===================================
+    # FRONTEND & UI DEPENDENCIES
+    # ===================================
+    "PyQt6",
+    
+    # ===================================
+    # ML CORE/DATA PROCESSING
+    # ===================================
+    "numpy>=2.0.2",
+    "pandas>=2.2.3",
+    "matplotlib",
+    "scipy>=1.14.1,<2.0.0",  # Updated to match matchms requirements
+    "scikit-learn>=1.5.2",
+    
+    # ===================================
+    # PROTEOMICS, BIOINFORMATICS, 
+    # CHEMOINFORMATICS, 
+    # & MATHEMATICAL CORE
+    # ===================================
+    "biopython",
+    "pyteomics>=4.7.5",
+    "matchms>=0.28.1",
+    "spectrum-utils>=0.4.2",
+    "lmfit",
+    "scikit-optimize",
+    "polars>=1.12.0",
+    "rdkit==2024.9.6",
+    "pubchempy==1.0.4",         
+    "sympy==1.13.3",           
+    
+    # ===================================
+    # AI/ML UTILS
+    # ===================================
+    "torch>=2.4.0",
+    "torchvision>=0.19.0",  # Updated for CUDA 12.4+ compatibility
+    "torchaudio>=2.4.0",    # Updated for CUDA 12.4+ compatibility
+    "tensorflow>=2.16.0",   # Updated for Python 3.12/3.13 + CUDA 12.x
+    "keras>=3.0.0",         # Updated Keras 3.x for TensorFlow 2.16+
+    "lightning>=2.5.1",
+    "torchmetrics",
+    
+    # ===================================
+    # JAX ECOSYSTEM
+    # ===================================
+    "jax[cuda12]>=0.4.25",   # Updated for CUDA 12.x support with GPU
+    "jaxlib>=0.4.25",        # Updated for CUDA 12.x compatibility
+    "flax>=0.8.0",           # Updated for newer JAX versions
+    "optax>=0.2.0",          # Updated for newer JAX versions
+    
+    # ===================================
+    # LLM DEPENDENCIES 
+    # ===================================
+    "transformers>=4.24.0",  # Updated from legacy 4.24.0
+    "tokenizers>=0.13.2",   
+    "huggingface-hub>=0.30.0,<1.0", 
+    "safetensors>=0.4.3",
+    "accelerate>=0.21.0",
+    
+    # ========================================
+    # DEEP LEARNING FRAMEWORKS FOR AI/ML CORES
+    # =========================================
+    "datasets>=2.14.0",
+    "evaluate>=0.2.0",
+    "jaxtyping>=0.2.34",
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+    "lightning>=2.5.1",
+    "fairscale>=0.4.12",
+
+    # ===================================
+    # DIFFUSION DEPENDENCIES 
+    # (FOR AMIDE MAPPING AI EXPERT)
+    # ===================================
+    "Pillow>=10.0.1,<=15.0",  
+    "timm>=0.9.0,<=1.0.11",   
+    "albumentations>=1.4.16",
+    "pycocotools",
+    
+    # ===================================
+    # NLP & TEXT PROCESSING
+    # (FOR LLM AI EXPERT)
+    # ===================================
+    "sentencepiece>=0.1.91,!=0.1.92", 
+    "tiktoken",
+    "ftfy",
+    "beautifulsoup4",
+    "nltk>=3.8,<=3.8.1",
+    "seqeval",
+    "conllu",
+    "rouge-score>=0.0.4,!=0.0.7,!=0.0.8,!=0.1,!=0.1.1",
+    "sacrebleu>=2.0.0,<2.1.0",  
+    "sacremoses",
+    "jiwer>=3.0.5",
+    "protobuf",
+    
+    # ===================================
+    # SPECIALIZED AI UTILS
+    # ===================================
+    "transfusion-asr>=0.1.0",
+    "instanovo",
+    
+    # ===================================
+    # DATA STORAGE & RETRIEVAL
+    # ===================================
+    "s3fs>=2024.9.0",
+    "faiss-cpu",            # Use CPU version until GPU version supports Python 3.12+
+    "tensorflow_datasets>=4.9.0",  # Re-enabled with proper TensorFlow
+    "pyarrow==19.0.1",          
+    "numba==0.60.0",
+    "lxml==4.9.4",              # XML/HTML parsing library         
+    
+    # ===================================
+    # MONITORING & EXPERIMENT TRACKING
+    # ===================================
+    "neptune>=1.13.0",
+    "tensorboard>=2.16.0",  # Updated for TensorFlow 2.16+ compatibility
+    "wandb>=0.13.5",  # Added for experiment tracking
+    "psutil==6.0.0",
+    "gpustat==1.1.1",
+    "nvidia-ml-py3",        # For GPU monitoring
+    
+    # ===================================
+    # CORE UTILS & SYSTEM UTILS
+    # ===================================
+    "requests>=2.32.3",
+    "pyyaml>=6.0.2",
+    "tqdm>=4.67.0",
+    "filelock",
+    "packaging>=20.0",
+    "regex!=2019.12.17",
+    "typer>=0.15.1",
+    "python-dotenv>=1.0.1",
+    "gitpython>=3.1.44",
+    "rich",
+    "fire",
+    "py7zr", 
+    "streamlit",            
+    
+    # ===================================
+    # DEVELOPMENT & BUILD TOOLS
+    # ===================================
+    "pyinstaller",
+    "git-python==1.0.3",
+    "hf-doc-builder>=0.3.0",
+    "ruff==0.11.2",
+    "libcst",
+    "ray",
+    
+    # ===================================
+    # PERFORMANCE & OPTIMIZATION
+    # ===================================
+    "hf_transfer",
+    "optuna",
+    "schedulefree>=1.2.6",
+    "codecarbon>=2.8.1",
+    
+    # ===================================
+    # DATABASE & SEARCH
+    # ===================================
+    "psycopg2-binary==2.9.9",
+    "elasticsearch",
+    
+    # ===================================
+    # ADDITIONAL MODEL SUPPORT UTILS
+    # ===================================
+    "dill<0.3.5",
+    "jieba",
+    "rjieba",
+    "num2words",
+]
+
+[dependency-groups]
+dev = [
+    # ===================================
+    # TESTING FRAMEWORK
+    # ===================================
+    "pytest<8.0.1", 
+    "pytest-asyncio",
+    "pytest-rerunfailures",
+    "pytest-timeout",
+    "pytest-cov>=5.0.0",
+    "pytest-html>=4.1.1",
+    "pytest-mock>=3.14.0",
+    "pytest-parallel>=0.1.1",
+    "pytest-random-order>=1.1.1",
+    "pytest-xdist>=3.6.1",
+    "pytest-order",
+    "pytest-rich",
+    "parameterized",
+    "timeout-decorator",
+    
+    # ===================================
+    # AMIDE MAPPING CORE DEVELOPMENT DEPENDENCIES
+    # ===================================
+    "allure-pytest>=2.13.5",
+    "coverage>=7.6.4",
+    "genbadge>=1.1.1",
+    "gsutil>=5.31",
+    "ipython==8.34.0",
+    "ipykernel>=6.29.5",
+    "ipywidgets>=8.1.5",
+    "jupyter>=1.1.1",
+    "matplotlib-venn>=1.1.2",
+    "nbmake>=1.5.5",
+    "pip>=25.0.1",
+    "pre-commit>=4.0.1",
+    "pyopenms-viz>=0.1.5",
+    "rich-codex>=1.2.7",
+    "seaborn>=0.13.2",
+    "testfixtures>=8.3.0",
+    "tomli>=2.2.1",
+]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-git-revision-date-plugin>=0.3.2",
+    "mkdocs-include-markdown-plugin>=7.0.0",
+    "mkdocs-material>=9.5.42",
+    "mkdocs-pymdownx-material-extras>=2.6",
+    "mkdocstrings>=0.26.2",
+    "mkdocstrings-python>=1.12.2",
+    "pymdown-extensions>=10.11.2",
+]
+
+# See https://docs.astral.sh/uv/guides/integration/pytorch/
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.4.1,<2.6",
+    "torchvision",
+    "torchaudio",
+]
+cu124 = [
+    "torch>=2.4.1,<2.6",
+    "torchvision",
+    "torchaudio",
+]
+gpu = [
+    "torch>=2.4.1,<2.6",
+    "torchvision",
+    "torchaudio",
+    "cupy-cuda12x",         # For GPU-accelerated NumPy operations
+]
+
+
+[tool.uv]
+required-version = ">=0.6.5"
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "cu124" },
+  ],
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-cu124", extra = "cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[project.scripts]
+conobot = "src.frontend.main:main"
+
+[tool.setuptools]
+include-package-data = true  # To use MANIFEST.in for including extra files
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"], content-type = "text/markdown" }
+
+[tool.setuptools.packages.find]
+include = ["src*", "conobot*"]
+
+[tool.setuptools.package-data]
+conobot = ["py.typed"]
+
+[tool.coverage.run]
+source = ["src", "conobot"]
+omit = ["*/__init__.py", "*_test.py"]
+
+[tool.coverage.report]
+omit = ["__init__.py", "*_test.py"]
+exclude_lines = [
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise AssertionError",
+    "raise NotImplementedError",
+
+    # Don't complain if non-runnable code isn't run:
+    "if 0:",
+    "if __name__ == .__main__.:"]
+
+[tool.coverage.html]
+directory = "coverage"
+
+[tool.codespell]
+skip = "*.js,*.html,*.css, *.svg, *.csv"
+ignore-words-list = ["abck", "fOf", "te", "woh", "ges", "fpt", "filll", "inro", "nd", "fo", "nd"]
+
+[tool.mypy]
+python_version = "3.10"
+namespace_packages = true
+incremental = false
+cache_dir = ".mypy_cache"
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = false
+allow_redefinition = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false
+strict_optional = true
+strict_equality = true
+explicit_package_bases = true
+follow_imports = "skip"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["A", "B", "C", "D", "E", "F", "G", "I", "N", "T", "W"]
+ignore = ["B008", "C901", "D100", "D103", "D104", "D105", "D107", "D417", "F722", "G004", "N812"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # Accepts: "google", "numpy", or "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore `D104` (missing docstring) in all `__init__.py` files
+"__init__.py" = ["D104"]
+"*.ipynb" = ["T201"]  # Ignore T201 (`print` found) in Jupyter Notebooks
+
+[project.urls]
+Homepage = "https://github.com/ConoWareProject/ConoBot"
+Issues = "https://github.com/ConoWareProject/ConoBot/issues"
+Documentation = "https://docs.conowareproject.org"

@@ -1,0 +1,244 @@
+name: Consolidated Docker Build
+
+on:
+  push:
+    branches:
+      - build_ci_docker_image*
+      - build_nightly_ci_docker_image*
+      - build_past_ci_docker_image*
+      - push-ci-image
+  repository_dispatch:
+  workflow_call:
+    inputs:
+      image_postfix:
+        required: false
+        type: string
+        default: ""
+      build_type:
+        required: false
+        type: string
+        default: "scheduled"
+        description: "Type of build: scheduled, nightly, past, or ci"
+  schedule:
+    - cron: "17 0 * * *"  # Daily scheduled build
+    - cron: "6 0 * * *"   # CI build schedule
+
+concurrency:
+  group: docker-images-builds-${{ inputs.build_type || 'scheduled' }}
+  cancel-in-progress: false
+
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+  SLACK_CHANNEL: ${{ secrets.CI_SLACK_CHANNEL_DOCKER }}
+  SLACK_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
+
+jobs:
+  # Matrix strategy for regular builds
+  build-matrix:
+    if: ${{ inputs.build_type != 'past' && !contains(github.event.head_commit.message, '[build-ci-image]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Latest builds
+          - name: "Latest PyTorch [dev]"
+            context: "./docker/transformers-all-latest-gpu"
+            tag: "huggingface/transformers-all-latest-gpu"
+            runner: "aws-general-8-plus"
+            build_args: "REF=main"
+            
+          - name: "Latest PyTorch + DeepSpeed"
+            context: "./docker/transformers-pytorch-deepspeed-latest-gpu"
+            tag: "huggingface/transformers-pytorch-deepspeed-latest-gpu"
+            runner: "aws-g4dn-2xlarge-cache"
+            build_args: "REF=main"
+            
+          - name: "Latest PyTorch (AMD) [dev]"
+            context: "./docker/transformers-pytorch-amd-gpu"
+            tag: "huggingface/transformers-pytorch-amd-gpu"
+            runner: "aws-general-8-plus"
+            build_args: "REF=main"
+            
+          - name: "PyTorch + DeepSpeed (AMD) [dev]"
+            context: "./docker/transformers-pytorch-deepspeed-amd-gpu"
+            tag: "huggingface/transformers-pytorch-deepspeed-amd-gpu"
+            runner: "aws-general-8-plus"
+            build_args: "REF=main"
+            
+          # Nightly builds
+          - name: "Nightly PyTorch + Stable TensorFlow"
+            context: "./docker/transformers-all-latest-gpu"
+            tag: "huggingface/transformers-all-latest-torch-nightly-gpu"
+            runner: "aws-general-8-plus"
+            build_args: |
+              REF=main
+              PYTORCH=pre
+            condition: ${{ inputs.build_type == 'nightly' }}
+            
+    name: ${{ matrix.name }}
+    runs-on:
+      group: ${{ matrix.runner }}
+    if: ${{ !matrix.condition || matrix.condition }}
+    
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Check out code
+        uses: actions/checkout@v4
+        
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
+          
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          build-args: ${{ matrix.build_args }}
+          push: true
+          tags: ${{ matrix.tag }}${{ inputs.image_postfix }}
+          
+      # Build push-ci variant for daily builds
+      - name: Build and push (Push CI variant)
+        if: ${{ inputs.image_postfix != '-push-ci' && matrix.name == 'Latest PyTorch [dev]' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          build-args: ${{ matrix.build_args }}
+          push: true
+          tags: ${{ matrix.tag }}-push-ci
+          
+      - name: Post to Slack
+        if: always()
+        uses: huggingface/hf-workflows/.github/actions/post-slack@main
+        with:
+          slack_channel: ${{ env.SLACK_CHANNEL }}
+          title: 🤗 Results of the ${{ matrix.tag }} docker build
+          status: ${{ job.status }}
+          slack_token: ${{ env.SLACK_TOKEN }}
+
+  # CI image builds with matrix strategy
+  build-ci-matrix:
+    if: ${{ contains(github.event.head_commit.message, '[build-ci-image]') || contains(github.event.head_commit.message, '[push-ci-image]') }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ["quality", "consistency", "custom-tokenizers", "torch-light", "tf-light", "exotic-models", "torch-tf-light", "jax-light", "examples-torch", "examples-tf"]
+    continue-on-error: true
+    
+    steps:
+      - name: Set tag
+        run: |
+          if ${{ contains(github.event.head_commit.message, '[build-ci-image]') }}; then
+            echo "TAG=huggingface/transformers-${{ matrix.file }}:dev" >> "$GITHUB_ENV"
+            echo "Setting tag to DEV!"
+          else
+            echo "TAG=huggingface/transformers-${{ matrix.file }}" >> "$GITHUB_ENV"
+          fi
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Check out code
+        uses: actions/checkout@v4
+        
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
+          
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/${{ matrix.file }}
+          push: true
+          tags: ${{ env.TAG }}${{ inputs.image_postfix }}
+
+  # Past versions build
+  build-past-versions:
+    if: ${{ inputs.build_type == 'past' || contains(github.ref, 'build_past_ci_docker_image') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ["pytorch", "tensorflow"]
+        version: ["1.13", "1.12", "1.11"]
+        
+    name: "Past ${{ matrix.framework }} ${{ matrix.version }}"
+    runs-on:
+      group: aws-general-8-plus
+      
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Check out code
+        uses: actions/checkout@v4
+        
+      - name: Get Base Image
+        id: get-base-image
+        env:
+          framework_version: ${{ matrix.version }}
+          framework: ${{ matrix.framework }}
+        run: |
+          echo "base_image=$(python3 -c 'import os; from utils.past_ci_versions import past_versions_testing; base_image = past_versions_testing[os.environ["framework"]][os.environ["framework_version"]]["base_image"]; print(base_image)')" >> $GITHUB_OUTPUT
+          
+      - name: Print Base Image
+        run: echo ${{ steps.get-base-image.outputs.base_image }}
+        
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
+          
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/transformers-past-gpu
+          build-args: |
+            REF=main
+            BASE_DOCKER_IMAGE=${{ steps.get-base-image.outputs.base_image }}
+          push: true
+          tags: huggingface/transformers-${{ matrix.framework }}-past-${{ matrix.version }}-gpu
+
+  # Doc builder (conditional)
+  doc-builder:
+    name: "Doc builder"
+    if: ${{ inputs.image_postfix != '-push-ci' }}
+    runs-on:
+      group: aws-general-8-plus
+      
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Check out code
+        uses: actions/checkout@v4
+        
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
+          
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/transformers-doc-builder
+          push: true
+          tags: huggingface/transformers-doc-builder
+          
+      - name: Post to Slack
+        if: always()
+        uses: huggingface/hf-workflows/.github/actions/post-slack@main
+        with:
+          slack_channel: ${{ env.SLACK_CHANNEL }}
+          title: 🤗 Results of the huggingface/transformers-doc-builder docker build
+          status: ${{ job.status }}
+          slack_token: ${{ env.SLACK_TOKEN }}

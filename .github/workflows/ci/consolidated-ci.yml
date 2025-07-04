@@ -1,0 +1,350 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main, develop, release/*]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+      - '.github/workflows/**'
+  
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+  
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - performance
+          - security
+
+env:
+  PYTHON_VERSION: '3.9'
+  COVERAGE_THRESHOLD: 80
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Code quality checks
+  quality-checks:
+    name: "Code Quality"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[dev,test]"
+          
+      - name: Run code formatting checks
+        run: |
+          black --check --diff .
+          isort --check-only --diff .
+          
+      - name: Run linting
+        run: |
+          flake8 src/ tests/
+          pylint src/
+          
+      - name: Run type checking
+        run: |
+          mypy src/
+          
+      - name: Run security scan
+        uses: pypa/gh-action-pip-audit@v1.0.8
+
+  # Unit tests
+  unit-tests:
+    name: "Unit Tests"
+    needs: [quality-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+        exclude:
+          # Reduce matrix for faster CI
+          - os: windows-latest
+            python-version: '3.8'
+          - os: macos-latest
+            python-version: '3.8'
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[test]"
+          
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml --cov-report=term-missing
+          
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-${{ matrix.os }}-${{ matrix.python-version }}
+
+  # Integration tests
+  integration-tests:
+    name: "Integration Tests"
+    needs: [quality-checks]
+    if: ${{ github.event_name != 'pull_request' || inputs.test_suite == 'integration' || inputs.test_suite == 'all' }}
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[test,integration]"
+          
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost/postgres
+        run: |
+          pytest tests/integration/ -v --tb=short
+
+  # Performance tests
+  performance-tests:
+    name: "Performance Tests"
+    needs: [unit-tests]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || inputs.test_suite == 'performance' || inputs.test_suite == 'all' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[test,benchmark]"
+          
+      - name: Run performance tests
+        run: |
+          pytest tests/performance/ -v --benchmark-only --benchmark-json=benchmark.json
+          
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'pytest'
+          output-file-path: benchmark.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+
+  # Security tests  
+  security-tests:
+    name: "Security Tests"
+    needs: [quality-checks]
+    if: ${{ inputs.test_suite == 'security' || inputs.test_suite == 'all' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Build and test package
+  build-package:
+    name: "Build Package"
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip build
+          
+      - name: Build package
+        run: |
+          python -m build
+          
+      - name: Test package installation
+        run: |
+          pip install dist/*.whl
+          python -c "import conobot_ai; print('Package installed successfully')"
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+          retention-days: 7
+
+  # Check tiny models
+  check-tiny-models:
+    name: "Check Tiny Models"
+    needs: [quality-checks]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[test]"
+          
+      - name: Run tiny model tests
+        run: |
+          python -m pytest tests/tiny_models/ -v
+
+  # Generate coverage report
+  coverage-report:
+    name: "Coverage Report"
+    needs: [unit-tests, integration-tests]
+    if: ${{ always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success') }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          
+      - name: Generate combined coverage report
+        run: |
+          pip install coverage
+          coverage combine
+          coverage report --show-missing
+          coverage html
+          
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+          
+      - name: Update coverage badge
+        run: |
+          coverage-badge -o coverage.svg
+          
+      - name: Commit coverage badge
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add coverage.svg
+          git diff --staged --quiet || git commit -m "Update coverage badge"
+          git push
+
+  # Summary job
+  ci-summary:
+    name: "CI Summary"
+    needs: [quality-checks, unit-tests, integration-tests, performance-tests, security-tests, build-package, check-tiny-models, coverage-report]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Summarize results
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Quality Checks | ${{ needs.quality-checks.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.unit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance Tests | ${{ needs.performance-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Tests | ${{ needs.security-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Package | ${{ needs.build-package.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Check Tiny Models | ${{ needs.check-tiny-models.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage Report | ${{ needs.coverage-report.result }} |" >> $GITHUB_STEP_SUMMARY

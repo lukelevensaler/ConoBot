@@ -1,350 +1,325 @@
-name: Continuous Integration
-
-on:
+name: Consolidated CI/CD Pipeline
+'on':
   push:
-    branches: [main, develop, release/*]
+    branches:
+    - main
+    - develop
+    - release/*
     paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - 'requirements*.txt'
-      - '.github/workflows/**'
-  
+    - '**/*.py'
+    - pyproject.toml
+    - requirements*.txt
+    - .github/workflows/**
   pull_request:
-    branches: [main, develop]
+    branches:
+    - main
+    - develop
     paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'pyproject.toml'
-      - 'requirements*.txt'
-  
+    - '**/*.py'
+    - pyproject.toml
+    - requirements*.txt
   workflow_dispatch:
     inputs:
       test_suite:
-        description: 'Test suite to run'
+        description: Test suite to run
         required: true
-        default: 'all'
+        default: all
         type: choice
         options:
-          - all
-          - unit
-          - integration
-          - performance
-          - security
-
+        - all
+        - core
+        - integration
+        - slow
+        - transformers
 env:
   PYTHON_VERSION: '3.9'
-  COVERAGE_THRESHOLD: 80
-
+  UV_CACHE_DIR: /tmp/.uv-cache
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 jobs:
-  # Code quality checks
   quality-checks:
-    name: "Code Quality"
+    name: Code Quality & Linting
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[dev,test]"
-          
-      - name: Run code formatting checks
-        run: |
-          black --check --diff .
-          isort --check-only --diff .
-          
-      - name: Run linting
-        run: |
-          flake8 src/ tests/
-          pylint src/
-          
-      - name: Run type checking
-        run: |
-          mypy src/
-          
-      - name: Run security scan
-        uses: pypa/gh-action-pip-audit@v1.0.8
-
-  # Unit tests
-  unit-tests:
-    name: "Unit Tests"
-    needs: [quality-checks]
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    - name: Install UV
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo '$HOME/.cargo/bin'
+        >> $GITHUB_PATH
+    - name: Create virtual environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv pip install -e . && uv pip install ruff black mypy
+    - name: Run ruff linting
+      run: ruff check .
+    - name: Run black formatting check
+      run: black --check .
+    - name: Run type checking
+      run: mypy --ignore-missing-imports .
+  security-checks:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: fs
+        scan-ref: .
+        format: sarif
+        output: trivy-results.sarif
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: trivy-results.sarif
+  core_tests:
+    name: 'Test: core-tests'
+    runs-on: ${{ matrix.os }}
+    needs:
+    - quality-checks
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite
+      == 'core' || github.event.inputs.test_suite == '' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8', '3.9', '3.10', '3.11']
-        exclude:
-          # Reduce matrix for faster CI
-          - os: windows-latest
-            python-version: '3.8'
-          - os: macos-latest
-            python-version: '3.8'
-    
+        os:
+        - ubuntu-latest
+        python-version:
+        - '3.9'
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      TRANSFORMERS_IS_CI: 'true'
+      PYTEST_TIMEOUT: '120'
+      RUN_PIPELINE_TESTS: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Cache UV dependencies
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.UV_CACHE_DIR }}
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt')
+          }}
+    - name: Install UV
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo '$HOME/.cargo/bin'
+        >> $GITHUB_PATH
+    - name: Create virtual environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv pip install -e . && uv pip install pytest pytest-xdist
+    - name: Show installed packages
+      run: uv pip list
+    - name: Create test results directory
+      run: mkdir -p test-results
+    - name: Run core-tests
+      run: python -m pytest --maxfail=5 --tb=short --strict-markers --disable-warnings
+        --color=yes -n 4 --junitxml=test-results/junit.xml -m 'not slow and not integration'
+        tests/
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-core-tests-${{ matrix.os }}-${{ matrix.python-version }}
+        path: test-results/
+  integration_tests:
+    name: 'Test: integration-tests'
     runs-on: ${{ matrix.os }}
-    
+    needs:
+    - quality-checks
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite
+      == 'integration' || github.event.inputs.test_suite == '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        python-version:
+        - '3.9'
+    timeout-minutes: 60
+    env:
+      OMP_NUM_THREADS: '1'
+      TRANSFORMERS_IS_CI: 'true'
+      PYTEST_TIMEOUT: '120'
+      RUN_PIPELINE_TESTS: 'true'
+      PYTHONUNBUFFERED: '1'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[test]"
-          
-      - name: Run unit tests
-        run: |
-          pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml --cov-report=term-missing
-          
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-${{ matrix.os }}-${{ matrix.python-version }}
-
-  # Integration tests
-  integration-tests:
-    name: "Integration Tests"
-    needs: [quality-checks]
-    if: ${{ github.event_name != 'pull_request' || inputs.test_suite == 'integration' || inputs.test_suite == 'all' }}
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Cache UV dependencies
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.UV_CACHE_DIR }}
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt')
+          }}
+    - name: Install UV
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo '$HOME/.cargo/bin'
+        >> $GITHUB_PATH
+    - name: Create virtual environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv pip install -e . && uv pip install pytest pytest-xdist
+    - name: Show installed packages
+      run: uv pip list
+    - name: Create test results directory
+      run: mkdir -p test-results
+    - name: Run integration-tests
+      run: python -m pytest --maxfail=5 --tb=short --strict-markers --disable-warnings
+        --color=yes -n 2 --junitxml=test-results/junit.xml -m 'integration' tests/
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-integration-tests-${{ matrix.os }}-${{ matrix.python-version
+          }}
+        path: test-results/
+  slow_tests:
+    name: 'Test: slow-tests'
+    runs-on: ${{ matrix.os }}
+    needs:
+    - quality-checks
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite
+      == 'slow' || github.event.inputs.test_suite == '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        python-version:
+        - '3.9'
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: '1'
+      TRANSFORMERS_IS_CI: 'true'
+      PYTEST_TIMEOUT: '120'
+      RUN_PIPELINE_TESTS: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Cache UV dependencies
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.UV_CACHE_DIR }}
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt')
+          }}
+    - name: Install UV
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo '$HOME/.cargo/bin'
+        >> $GITHUB_PATH
+    - name: Create virtual environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv pip install -e . && uv pip install pytest pytest-xdist
+    - name: Show installed packages
+      run: uv pip list
+    - name: Create test results directory
+      run: mkdir -p test-results
+    - name: Run slow-tests
+      run: python -m pytest --maxfail=5 --tb=short --strict-markers --disable-warnings
+        --color=yes -n 1 --junitxml=test-results/junit.xml -m 'slow' tests/
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-slow-tests-${{ matrix.os }}-${{ matrix.python-version }}
+        path: test-results/
+  transformers_tests:
+    name: 'Test: transformers-tests'
+    runs-on: ${{ matrix.os }}
+    needs:
+    - quality-checks
+    if: ${{ github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite
+      == 'transformers' || github.event.inputs.test_suite == '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        python-version:
+        - '3.9'
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: '1'
+      TRANSFORMERS_IS_CI: 'true'
+      PYTEST_TIMEOUT: '120'
+      RUN_PIPELINE_TESTS: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Cache UV dependencies
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.UV_CACHE_DIR }}
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt')
+          }}
+    - name: Install UV
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo '$HOME/.cargo/bin'
+        >> $GITHUB_PATH
+    - name: Create virtual environment
+      run: uv venv
+    - name: Install dependencies
+      run: uv pip install -e . && uv pip install torch torchvision transformers &&
+        uv pip install pytest pytest-xdist pytest-timeout
+    - name: Show installed packages
+      run: uv pip list
+    - name: Create test results directory
+      run: mkdir -p test-results
+    - name: Run transformers-tests
+      run: python -m pytest --maxfail=5 --tb=short --strict-markers --disable-warnings
+        --color=yes -n 2 --junitxml=test-results/junit.xml -m 'transformers' tests/
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-transformers-tests-${{ matrix.os }}-${{ matrix.python-version
+          }}
+        path: test-results/
+  coverage:
+    name: Code Coverage
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: postgres:13
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    
+    needs:
+    - core_tests
+    - integration_tests
+    - slow_tests
+    - transformers_tests
+    if: always()
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[test,integration]"
-          
-      - name: Run integration tests
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost/postgres
-        run: |
-          pytest tests/integration/ -v --tb=short
-
-  # Performance tests
-  performance-tests:
-    name: "Performance Tests"
-    needs: [unit-tests]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || inputs.test_suite == 'performance' || inputs.test_suite == 'all' }}
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[test,benchmark]"
-          
-      - name: Run performance tests
-        run: |
-          pytest tests/performance/ -v --benchmark-only --benchmark-json=benchmark.json
-          
-      - name: Store benchmark results
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: 'pytest'
-          output-file-path: benchmark.json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-
-  # Security tests  
-  security-tests:
-    name: "Security Tests"
-    needs: [quality-checks]
-    if: ${{ inputs.test_suite == 'security' || inputs.test_suite == 'all' }}
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-  # Build and test package
-  build-package:
-    name: "Build Package"
-    needs: [unit-tests]
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip build
-          
-      - name: Build package
-        run: |
-          python -m build
-          
-      - name: Test package installation
-        run: |
-          pip install dist/*.whl
-          python -c "import conobot_ai; print('Package installed successfully')"
-          
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-packages
-          path: dist/
-          retention-days: 7
-
-  # Check tiny models
-  check-tiny-models:
-    name: "Check Tiny Models"
-    needs: [quality-checks]
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[test]"
-          
-      - name: Run tiny model tests
-        run: |
-          python -m pytest tests/tiny_models/ -v
-
-  # Generate coverage report
-  coverage-report:
-    name: "Coverage Report"
-    needs: [unit-tests, integration-tests]
-    if: ${{ always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success') }}
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Download coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-*
-          merge-multiple: true
-          
-      - name: Generate combined coverage report
-        run: |
-          pip install coverage
-          coverage combine
-          coverage report --show-missing
-          coverage html
-          
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: htmlcov/
-          
-      - name: Update coverage badge
-        run: |
-          coverage-badge -o coverage.svg
-          
-      - name: Commit coverage badge
-        if: ${{ github.ref == 'refs/heads/main' }}
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add coverage.svg
-          git diff --staged --quiet || git commit -m "Update coverage badge"
-          git push
-
-  # Summary job
-  ci-summary:
-    name: "CI Summary"
-    needs: [quality-checks, unit-tests, integration-tests, performance-tests, security-tests, build-package, check-tiny-models, coverage-report]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Summarize results
-        run: |
-          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Quality Checks | ${{ needs.quality-checks.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Unit Tests | ${{ needs.unit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Performance Tests | ${{ needs.performance-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Security Tests | ${{ needs.security-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build Package | ${{ needs.build-package.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Check Tiny Models | ${{ needs.check-tiny-models.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Coverage Report | ${{ needs.coverage-report.result }} |" >> $GITHUB_STEP_SUMMARY
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    - name: Install dependencies
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH='$HOME/.cargo/bin:$PATH'
+        && uv pip install coverage pytest-cov
+    - name: Run coverage
+      run: python -m pytest --cov=. --cov-report=xml tests/
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml

@@ -1,0 +1,120 @@
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: debug-statements # Check for debugger imports
+      - id: requirements-txt-fixer # Order requirements alphabetically
+      - id: check-ast # Simply check whether the files parse as valid python
+      - id: check-case-conflict # Check for files that would conflict in case-insensitive filesystems
+      - id: check-builtin-literals # Require literal syntax when initializing empty or zero Python builtin types
+      - id: check-docstring-first # Check a common error of defining a docstring after code
+      - id: check-merge-conflict # Check for files that contain merge conflict strings
+      - id: check-yaml # Check yaml files
+        args: ["--unsafe"]
+      - id: end-of-file-fixer # Ensure that a file is either empty, or ends with one newline
+      - id: mixed-line-ending # Replace or checks mixed line ending
+      - id: trailing-whitespace # This hook trims trailing whitespace
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages:
+          - commit-msg
+        args:
+          [
+            "ci",
+            "build",
+            "docs",
+            "feat",
+            "fix",
+            "perf",
+            "refactor",
+            "style",
+            "test",
+            "exp",
+            "chore",
+          ]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.0.0-alpha.4
+    hooks:
+      - id: prettier
+        args:
+          - --print-width=100
+          - --prose-wrap=always
+          - --tab-width=2
+
+  #   - repo: https://github.com/asottile/pyupgrade
+  #     rev: v3.15.0
+  #     hooks:
+  #       - id: pyupgrade
+  #         args:
+  #           - --py38-plus
+
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        additional_dependencies: ["toml"]
+        args:
+          - --convention=google
+          - --add-ignore=D100,D104,D105,D107,D417
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        name: codespell
+        description: Checks for common misspellings in text files.
+        entry: codespell --toml pyproject.toml
+        language: python
+        types: [text]
+        additional_dependencies:
+          - tomli
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
+        exclude: ^notebooks/introducing_the_next_generation_of_InstaNovo_models\.ipynb$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.0
+    hooks:
+      # Run the linter.
+      - id: ruff
+        args:
+          [
+            "--select",
+            "A,B,C,D,E,F,G,I,N,T,W",
+            "--fix",
+            "--ignore",
+            "B008,C901,D100,D103,D104,D105,D107,D417,F722,G004,N812",
+          ]
+        types_or: [python, pyi]
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: "v1.15.0"
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-PyYAML, types-tqdm] # TODO: pandas-stubs
+        args:
+          [
+            --ignore-missing-imports,
+            "--exclude=(notebooks|tests)",
+            --disable-error-code,
+            "name-defined",
+          ]
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    # uv version.
+    rev: 0.6.6
+    hooks:
+      # Update the uv lockfile
+      - id: uv-lock

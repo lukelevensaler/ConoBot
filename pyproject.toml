@@ -194,7 +194,7 @@ dependencies = [
     # ===================================
     # ADDITIONAL MODEL SUPPORT UTILS
     # ===================================
-    "dill<0.3.5",
+    "dill<0.4.1",
     "jieba",
     "rjieba",
     "num2words",
